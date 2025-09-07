@@ -23,6 +23,7 @@ app.use(morgan('dev'))
 const verifyToken = async (req, res, next) => {
   const token = req.cookies?.token
 
+
   if (!token) {
     return res.status(401).send({ message: 'unauthorized access' })
   }
@@ -36,6 +37,8 @@ const verifyToken = async (req, res, next) => {
   })
 }
 
+
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.kreq4.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -48,7 +51,38 @@ const client = new MongoClient(uri, {
 })
 async function run() {
   try {
-    // Generate jwt token
+    // Make sure MongoDB client is connected
+    await client.connect()
+    console.log("✅ Connected to MongoDB")
+
+    const db = client.db('plantnet')
+    const usersCollection = db.collection('users')
+    const plantsCollection = db.collection('plants')
+
+    //!---------------users related apis--------------------------
+    app.post('/users/:email', async (req, res) => {
+      console.log("📩 Hit /users/:email")  // debug log
+
+      const email = req.params.email
+      const query = { email }
+      const user = req.body
+
+      // check if user exists in db
+      const isExist = await usersCollection.findOne(query)
+      if (isExist) {
+        return res.send({ message: 'user already exists' })
+      }
+
+      const result = await usersCollection.insertOne({
+        ...user,
+        role:"customer",
+        timeStamp: Date.now()
+      })
+
+      res.send(result)
+    })
+
+    // ✅ JWT route
     app.post('/jwt', async (req, res) => {
       const email = req.body
       const token = jwt.sign(email, process.env.ACCESS_TOKEN_SECRET, {
@@ -62,7 +96,8 @@ async function run() {
         })
         .send({ success: true })
     })
-    // Logout
+
+    // ✅ Logout
     app.get('/logout', async (req, res) => {
       try {
         res
@@ -77,15 +112,30 @@ async function run() {
       }
     })
 
-    // Send a ping to confirm a successful connection
+    // ! -------------------save plant data in db-------------------------
+    
+    app.post('/plants',verifyToken,async (req, res) => {
+      const plant = req.body
+      const result = await plantsCollection.insertOne(plant)
+      res.send(result)
+    })
+
+    // get all plants
+    app.get('/plants', async (req, res) => {
+      const result = await plantsCollection.find().limit(20).toArray()
+      res.send(result)
+    })
+
+
+
+    // Confirm connection
     await client.db('admin').command({ ping: 1 })
-    console.log(
-      'Pinged your deployment. You successfully connected to MongoDB!'
-    )
+    console.log('🚀 Pinged your deployment. MongoDB connected!')
   } finally {
-    // Ensures that the client will close when you finish/error
+    // Don't close client here — keep connection alive for server
   }
 }
+
 run().catch(console.dir)
 
 app.get('/', (req, res) => {
