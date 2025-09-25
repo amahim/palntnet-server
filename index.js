@@ -57,6 +57,33 @@ async function run() {
     const plantsCollection = db.collection("plants");
     const ordersCollection = db.collection("orders");
 
+    //! ---------------------------verify admin middleware---------
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.user?.email;
+      const query = { email };
+      const result = await usersCollection.findOne(query);
+      if (!result || result?.role !== "admin") {
+        return res
+          .status(403)
+          .send({ message: "forbidden access! Admin only access!" });
+      }
+
+      next();
+    };
+    //! ---------------------------verify seller middleware---------
+    const verifySeller = async (req, res, next) => {
+      const email = req.user?.email;
+      const query = { email };
+      const result = await usersCollection.findOne(query);
+      if (!result || result?.role !== "seller") {
+        return res
+          .status(403)
+          .send({ message: "forbidden access! Seller only access!" });
+      }
+
+      next();
+    };
+
     //!---------------users related apis--------------------------
     app.post("/users/:email", async (req, res) => {
       console.log("📩 Hit /users/:email"); // debug log
@@ -80,21 +107,39 @@ async function run() {
       res.send(result);
     });
 
+    // get all users without own mail
+    // app.get("/users/:email", verifyToken, async (req, res) => {
+    //   const email = req.params.email;
+    //   const query = {email:{
+    //     $ne: email
+    //   }}
+    //   const result = await usersCollection.find(query).toArray();
+    //   res.send(result);
+    // });
+
     // get all users
-    app.get("/users/:email", verifyToken, async (req, res) => {
+    app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
+      const result = await usersCollection.find().toArray();
+      res.send(result);
+    });
+
+    // update a user role n status
+    app.patch("/user/role/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
-      const query = {email:{
-        $ne: email
-      }}
-      const result = await usersCollection.find(query).toArray();
+      const { role } = req.body;
+      const filter = { email };
+      const updateDoc = {
+        $set: { role, status: "Verified" },
+      };
+      const result = await usersCollection.updateOne(filter, updateDoc);
       res.send(result);
     });
 
     // get user role
     app.get("/users/role/:email", verifyToken, async (req, res) => {
       const email = req.params.email;
-      const result = await usersCollection.findOne({email});
-      
+      const result = await usersCollection.findOne({ email });
+
       res.send({ role: result?.role });
     });
 
@@ -146,7 +191,7 @@ async function run() {
 
     // ! -------------------save plant data in db-------------------------
 
-    app.post("/plants", verifyToken, async (req, res) => {
+    app.post("/plants", verifyToken, verifySeller, async (req, res) => {
       const plant = req.body;
       const result = await plantsCollection.insertOne(plant);
       res.send(result);
@@ -155,6 +200,23 @@ async function run() {
     // get all plants
     app.get("/plants", async (req, res) => {
       const result = await plantsCollection.find().limit(20).toArray();
+      res.send(result);
+    });
+
+    // get inventory data for seller
+    app.get("/plants/seller", verifyToken, verifySeller, async (req, res) => {
+      const email = req.user.email;
+      const result = await plantsCollection
+        .find({ "seller.email": email })
+        .toArray();
+      res.send(result);
+    });
+
+    // delete a plant from db by seller
+    app.delete("/plants/:id", verifyToken, verifySeller, async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await plantsCollection.deleteOne(query);
       res.send(result);
     });
 
