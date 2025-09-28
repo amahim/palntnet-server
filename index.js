@@ -5,6 +5,7 @@ const cookieParser = require("cookie-parser");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
 const morgan = require("morgan");
+const nodemailer = require("nodemailer");
 
 const port = process.env.PORT || 5000;
 const app = express();
@@ -33,6 +34,42 @@ const verifyToken = async (req, res, next) => {
     }
     req.user = decoded;
     next();
+  });
+};
+
+// send email using nodemailer
+const sendEmail = (emailAddress, emailData) => {
+  const transporter = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false, // true for 465, false for other ports
+    auth: {
+      user: process.env.NODEMAILER_USER,
+      pass: process.env.NODEMAILER_PASS,
+    },
+  });
+  transporter.verify((error, success) => {
+    if (error) {
+      console.log(error);
+    } else {
+      console.log("Ready to send email", success);
+    }
+  });
+
+  const mailBody = {
+    from: process.env.NODEMAILER_USER,
+    to: emailAddress,
+    subject: emailData.subject,
+    // text: emailData.message,
+    html: `<p>${emailData.message}</p>`,
+  };
+
+  transporter.sendMail(mailBody, (err, info) => {
+    if (err) {
+      console.log(err);
+    } else {
+      console.log("Email sent: " + info.response);
+    }
   });
 };
 
@@ -86,8 +123,6 @@ async function run() {
 
     //!---------------users related apis--------------------------
     app.post("/users/:email", async (req, res) => {
-      console.log("📩 Hit /users/:email"); // debug log
-
       const email = req.params.email;
       const query = { email };
       const user = req.body;
@@ -124,16 +159,21 @@ async function run() {
     });
 
     // update a user role n status
-    app.patch("/user/role/:email", verifyToken, async (req, res) => {
-      const email = req.params.email;
-      const { role } = req.body;
-      const filter = { email };
-      const updateDoc = {
-        $set: { role, status: "Verified" },
-      };
-      const result = await usersCollection.updateOne(filter, updateDoc);
-      res.send(result);
-    });
+    app.patch(
+      "/user/role/:email",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const email = req.params.email;
+        const { role } = req.body;
+        const filter = { email };
+        const updateDoc = {
+          $set: { role, status: "Verified" },
+        };
+        const result = await usersCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      }
+    );
 
     // get user role
     app.get("/users/role/:email", verifyToken, async (req, res) => {
@@ -252,6 +292,23 @@ async function run() {
       const orderInfo = req.body;
       console.log(orderInfo);
       const result = await ordersCollection.insertOne(orderInfo);
+      if (result.insertedId) {
+        // send confirmation email to customer
+        sendEmail(orderInfo?.customer?.email, {
+          subject: "Order Confirmation - plantNet",
+          message: `Your order has been successfully placed! We will notify you once it's shipped. Thank you for choosing plantNet!
+          [Transaction ID: ${result.insertedId}]
+          `,
+        });
+        // to seller
+        sendEmail(orderInfo?.seller, {
+          subject: "New Order Received - plantNet",
+          message: `You have received a new order. Please process the order promptly.
+          Customer name : ${orderInfo?.customer?.name},
+          [Transaction ID: ${result.insertedId}]
+          `,
+        });
+      }
       res.send(result);
     });
     // get all orders from db
@@ -296,6 +353,58 @@ async function run() {
           },
         ])
         .toArray();
+      res.send(result);
+    });
+    // get orders via single seller email
+    app.get(
+      "/seller-orders/:email",
+      verifyToken,
+      verifySeller,
+      async (req, res) => {
+        const email = req.params.email;
+        const result = await ordersCollection
+          .aggregate([
+            { $match: { seller: email } },
+            {
+              $addFields: {
+                plantId: { $toObjectId: "$plantId" },
+              },
+            },
+            {
+              $lookup: {
+                from: "plants",
+                localField: "plantId",
+                foreignField: "_id",
+                as: "plants",
+              },
+            },
+            {
+              $unwind: "$plants",
+            },
+            {
+              $addFields: {
+                plantName: "$plants.name",
+              },
+            },
+            {
+              $project: {
+                plants: 0,
+              },
+            },
+          ])
+          .toArray();
+        res.send(result);
+      }
+    );
+    // update a oder status
+    app.patch("/order/:id", verifyToken, verifySeller, async (req, res) => {
+      const id = req.params.id;
+      const { status } = req.body;
+      const filter = { _id: new ObjectId(id) };
+      const updateDoc = {
+        $set: { status },
+      };
+      const result = await ordersCollection.updateOne(filter, updateDoc);
       res.send(result);
     });
 
