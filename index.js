@@ -87,7 +87,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Make sure MongoDB client is connected
-    await client.connect();
+    // await client.connect();
     console.log("✅ Connected to MongoDB");
 
     const db = client.db("plantnet");
@@ -603,7 +603,7 @@ app.patch("/plants/:id", verifyToken, verifySeller, async (req, res) => {
     });
 
     // Confirm connection
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log("🚀 Pinged your deployment. MongoDB connected!");
   } finally {
     // Don't close client here — keep connection alive for server
