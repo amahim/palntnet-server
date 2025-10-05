@@ -12,7 +12,12 @@ const port = process.env.PORT || 5000;
 const app = express();
 // middleware
 const corsOptions = {
-  origin: ["http://localhost:5173", "http://localhost:5174"],
+  origin: [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "https://plantnet-client.netlify.app", // Replace with your actual Netlify URL
+    
+  ],
   credentials: true,
   optionSuccessStatus: 200,
 };
@@ -222,76 +227,88 @@ async function run() {
 
     //! -------------------save plant data in db-------------------------
     // Update plant info - PATCH endpoint
-app.patch("/plants/:id", verifyToken, verifySeller, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const updateData = req.body;
-    const userEmail = req.user.email;
+    app.patch("/plants/:id", verifyToken, verifySeller, async (req, res) => {
+      try {
+        const { id } = req.params;
+        const updateData = req.body;
+        const userEmail = req.user.email;
 
-    // Validate ObjectId
-    let objectId;
-    try {
-      objectId = new ObjectId(id);
-    } catch (err) {
-      return res.status(400).send({ error: "Invalid plant id format" });
-    }
+        // Validate ObjectId
+        let objectId;
+        try {
+          objectId = new ObjectId(id);
+        } catch (err) {
+          return res.status(400).send({ error: "Invalid plant id format" });
+        }
 
-    // First, check if the plant exists and belongs to the seller
-    const existingPlant = await plantsCollection.findOne({ _id: objectId });
-    if (!existingPlant) {
-      return res.status(404).send({ error: "Plant not found" });
-    }
+        // First, check if the plant exists and belongs to the seller
+        const existingPlant = await plantsCollection.findOne({ _id: objectId });
+        if (!existingPlant) {
+          return res.status(404).send({ error: "Plant not found" });
+        }
 
-    // Check if the plant belongs to the current seller
-    if (existingPlant.seller.email !== userEmail) {
-      return res.status(403).send({ error: "Unauthorized: You can only update your own plants" });
-    }
+        // Check if the plant belongs to the current seller
+        if (existingPlant.seller.email !== userEmail) {
+          return res
+            .status(403)
+            .send({
+              error: "Unauthorized: You can only update your own plants",
+            });
+        }
 
-    // Prepare update object, excluding fields that shouldn't be updated
-    const allowedUpdates = ['name', 'category', 'description', 'price', 'quantity', 'image'];
-    const updateObject = {};
-    
-    allowedUpdates.forEach(field => {
-      if (updateData[field] !== undefined) {
-        updateObject[field] = updateData[field];
+        // Prepare update object, excluding fields that shouldn't be updated
+        const allowedUpdates = [
+          "name",
+          "category",
+          "description",
+          "price",
+          "quantity",
+          "image",
+        ];
+        const updateObject = {};
+
+        allowedUpdates.forEach((field) => {
+          if (updateData[field] !== undefined) {
+            updateObject[field] = updateData[field];
+          }
+        });
+
+        // Add timestamp for when the plant was last updated
+        updateObject.updatedAt = new Date();
+
+        // Perform the update
+        const result = await plantsCollection.updateOne(
+          { _id: objectId },
+          { $set: updateObject }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ error: "Plant not found" });
+        }
+
+        if (result.modifiedCount === 0) {
+          return res.status(200).send({
+            message: "No changes detected",
+            acknowledged: true,
+            matchedCount: result.matchedCount,
+            modifiedCount: result.modifiedCount,
+          });
+        }
+
+        // Return success response
+        res.status(200).send({
+          acknowledged: true,
+          matchedCount: result.matchedCount,
+          modifiedCount: result.modifiedCount,
+          message: "Plant updated successfully",
+        });
+      } catch (error) {
+        console.error("Error updating plant:", error);
+        res
+          .status(500)
+          .send({ error: "Internal server error while updating plant" });
       }
     });
-
-    // Add timestamp for when the plant was last updated
-    updateObject.updatedAt = new Date();
-
-    // Perform the update
-    const result = await plantsCollection.updateOne(
-      { _id: objectId },
-      { $set: updateObject }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).send({ error: "Plant not found" });
-    }
-
-    if (result.modifiedCount === 0) {
-      return res.status(200).send({ 
-        message: "No changes detected", 
-        acknowledged: true,
-        matchedCount: result.matchedCount,
-        modifiedCount: result.modifiedCount
-      });
-    }
-
-    // Return success response
-    res.status(200).send({
-      acknowledged: true,
-      matchedCount: result.matchedCount,
-      modifiedCount: result.modifiedCount,
-      message: "Plant updated successfully"
-    });
-
-  } catch (error) {
-    console.error("Error updating plant:", error);
-    res.status(500).send({ error: "Internal server error while updating plant" });
-  }
-});
 
     app.post("/plants", verifyToken, verifySeller, async (req, res) => {
       const plant = req.body;
@@ -348,8 +365,6 @@ app.patch("/plants/:id", verifyToken, verifySeller, async (req, res) => {
     });
 
     // update plant info here
-    
- 
 
     //!--------------- order related data in db---------------
 
