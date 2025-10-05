@@ -30,7 +30,7 @@ const verifyToken = async (req, res, next) => {
   }
   jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
     if (err) {
-      console.log(err);
+      // console.log(err);
       return res.status(401).send({ message: "unauthorized access" });
     }
     req.user = decoded;
@@ -51,9 +51,9 @@ const sendEmail = (emailAddress, emailData) => {
   });
   transporter.verify((error, success) => {
     if (error) {
-      console.log(error);
+      // console.log(error);
     } else {
-      console.log("Ready to send email", success);
+      // console.log("Ready to send email", success);
     }
   });
 
@@ -67,9 +67,9 @@ const sendEmail = (emailAddress, emailData) => {
 
   transporter.sendMail(mailBody, (err, info) => {
     if (err) {
-      console.log(err);
+      // console.log(err);
     } else {
-      console.log("Email sent: " + info.response);
+      // console.log("Email sent: " + info.response);
     }
   });
 };
@@ -88,7 +88,7 @@ async function run() {
   try {
     // Make sure MongoDB client is connected
     // await client.connect();
-    console.log("✅ Connected to MongoDB");
+    // console.log("✅ Connected to MongoDB");
 
     const db = client.db("plantnet");
     const usersCollection = db.collection("users");
@@ -356,7 +356,7 @@ app.patch("/plants/:id", verifyToken, verifySeller, async (req, res) => {
     // save order info to db
     app.post("/order", verifyToken, async (req, res) => {
       const orderInfo = req.body;
-      console.log(orderInfo);
+      // console.log(orderInfo);
       const result = await ordersCollection.insertOne(orderInfo);
       if (result.insertedId) {
         // send confirmation email to customer
@@ -604,7 +604,7 @@ app.patch("/plants/:id", verifyToken, verifySeller, async (req, res) => {
 
     // Confirm connection
     // await client.db("admin").command({ ping: 1 });
-    console.log("🚀 Pinged your deployment. MongoDB connected!");
+    // console.log("🚀 Pinged your deployment. MongoDB connected!");
   } finally {
     // Don't close client here — keep connection alive for server
   }
@@ -617,5 +617,5 @@ app.get("/", (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`plantNet is running on port ${port}`);
+  // console.log(`plantNet is running on port ${port}`);
 });
