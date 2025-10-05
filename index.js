@@ -6,6 +6,7 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const jwt = require("jsonwebtoken");
 const morgan = require("morgan");
 const nodemailer = require("nodemailer");
+const stripe = require("stripe")(process.env.PAYMENT_SECRET_KEY);
 
 const port = process.env.PORT || 5000;
 const app = express();
@@ -142,16 +143,6 @@ async function run() {
       res.send(result);
     });
 
-    // get all users without own mail
-    // app.get("/users/:email", verifyToken, async (req, res) => {
-    //   const email = req.params.email;
-    //   const query = {email:{
-    //     $ne: email
-    //   }}
-    //   const result = await usersCollection.find(query).toArray();
-    //   res.send(result);
-    // });
-
     // get all users
     app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
       const result = await usersCollection.find().toArray();
@@ -229,7 +220,78 @@ async function run() {
       }
     });
 
-    // ! -------------------save plant data in db-------------------------
+    //! -------------------save plant data in db-------------------------
+    // Update plant info - PATCH endpoint
+app.patch("/plants/:id", verifyToken, verifySeller, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updateData = req.body;
+    const userEmail = req.user.email;
+
+    // Validate ObjectId
+    let objectId;
+    try {
+      objectId = new ObjectId(id);
+    } catch (err) {
+      return res.status(400).send({ error: "Invalid plant id format" });
+    }
+
+    // First, check if the plant exists and belongs to the seller
+    const existingPlant = await plantsCollection.findOne({ _id: objectId });
+    if (!existingPlant) {
+      return res.status(404).send({ error: "Plant not found" });
+    }
+
+    // Check if the plant belongs to the current seller
+    if (existingPlant.seller.email !== userEmail) {
+      return res.status(403).send({ error: "Unauthorized: You can only update your own plants" });
+    }
+
+    // Prepare update object, excluding fields that shouldn't be updated
+    const allowedUpdates = ['name', 'category', 'description', 'price', 'quantity', 'image'];
+    const updateObject = {};
+    
+    allowedUpdates.forEach(field => {
+      if (updateData[field] !== undefined) {
+        updateObject[field] = updateData[field];
+      }
+    });
+
+    // Add timestamp for when the plant was last updated
+    updateObject.updatedAt = new Date();
+
+    // Perform the update
+    const result = await plantsCollection.updateOne(
+      { _id: objectId },
+      { $set: updateObject }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ error: "Plant not found" });
+    }
+
+    if (result.modifiedCount === 0) {
+      return res.status(200).send({ 
+        message: "No changes detected", 
+        acknowledged: true,
+        matchedCount: result.matchedCount,
+        modifiedCount: result.modifiedCount
+      });
+    }
+
+    // Return success response
+    res.status(200).send({
+      acknowledged: true,
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+      message: "Plant updated successfully"
+    });
+
+  } catch (error) {
+    console.error("Error updating plant:", error);
+    res.status(500).send({ error: "Internal server error while updating plant" });
+  }
+});
 
     app.post("/plants", verifyToken, verifySeller, async (req, res) => {
       const plant = req.body;
@@ -284,6 +346,10 @@ async function run() {
       const result = await plantsCollection.findOne(query);
       res.send(result);
     });
+
+    // update plant info here
+    
+ 
 
     //!--------------- order related data in db---------------
 
@@ -435,6 +501,105 @@ async function run() {
       }
       const result = await ordersCollection.deleteOne(query);
       res.send(result);
+    });
+
+    // admin stats
+    app.get("/admin-stat", verifyToken, verifyAdmin, async (req, res) => {
+      const totalUsers = await usersCollection.estimatedDocumentCount();
+      const totalPlants = await plantsCollection.estimatedDocumentCount();
+
+      // Chart data - get aggregated data by date
+      const chartData = await ordersCollection
+        .aggregate([
+          {
+            $group: {
+              _id: {
+                $dateToString: {
+                  format: "%d/%m/%Y",
+                  date: { $toDate: "$_id" },
+                },
+              },
+              quantity: { $sum: "$quantity" },
+              price: { $sum: "$price" },
+              order: { $sum: 1 },
+            },
+          },
+          {
+            $project: {
+              date: "$_id",
+              quantity: 1,
+              price: 1,
+              order: 1,
+              _id: 0,
+            },
+          },
+          {
+            $sort: { date: 1 }, // Sort by date
+          },
+        ])
+        .toArray(); // Use toArray() to get an array of documents
+
+      // Get total revenue and orders
+      const orderDetails = await ordersCollection
+        .aggregate([
+          {
+            $group: {
+              _id: null,
+              totalRevenue: { $sum: "$price" },
+              totalOrder: { $sum: 1 },
+            },
+          },
+          {
+            $project: {
+              _id: 0,
+              totalRevenue: 1,
+              totalOrder: 1,
+            },
+          },
+        ])
+        .next();
+
+      // Extract values with fallbacks
+      const totalRevenue = orderDetails?.totalRevenue || 0;
+      const totalOrder = orderDetails?.totalOrder || 0;
+
+      res.send({
+        totalUsers,
+        totalPlants,
+        totalRevenue,
+        totalOrder,
+        chartData,
+      });
+    });
+
+    //!-----------payment related --------------------
+
+    // create payment intent
+    app.post("/create-payment-intent", verifyToken, async (req, res) => {
+      const { quantity, plantId } = req.body;
+      const plant = await plantsCollection.findOne({
+        _id: new ObjectId(plantId),
+      });
+      if (!plant) {
+        return res.status(400).send({ message: "Plant Not Found" });
+      }
+      const totalPrice = quantity * plant.price * 100; // total price in cents
+
+      // Stripe minimum amount validation (50 cents for USD)
+      if (totalPrice < 50) {
+        return res.status(400).send({
+          message: "Amount must be at least $0.50 USD for payment processing",
+        });
+      }
+
+      const { client_secret } = await stripe.paymentIntents.create({
+        amount: Math.round(totalPrice), // Ensure it's an integer
+        currency: "usd",
+        automatic_payment_methods: {
+          enabled: true,
+        },
+      });
+      res.send({ clientSecret: client_secret });
     });
 
     // Confirm connection
